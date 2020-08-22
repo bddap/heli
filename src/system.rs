@@ -8,13 +8,19 @@ use ggez::{
 pub fn tick(worl: &mut World) {
     vel(worl);
     gravity(worl);
+    bounce_floor(worl);
 }
 
 pub fn draw(worl: &mut World, ctx: &mut Context) -> GameResult<()> {
-    for (pos, draw) in worl.pos.iter().zip(worl.draw.iter()) {
+    for ((pos, draw), rot) in worl.pos.iter().zip(worl.draw.iter()).zip(worl.rot.iter()) {
         match (pos, draw) {
             (Some(pos), Some(mesh)) => {
-                graphics::draw(ctx, mesh, DrawParam::new().dest([pos.0, pos.1]))?;
+                let dp = DrawParam::new().dest([pos.0, pos.1]);
+                let dp = match rot {
+                    Some(rot) => dp.rotation(*rot),
+                    None => dp,
+                };
+                graphics::draw(ctx, mesh, dp)?;
             }
             _ => {}
         }
@@ -35,10 +41,32 @@ fn vel(worl: &mut World) {
 }
 
 fn gravity(worl: &mut World) {
-    for vel in worl.vel.iter_mut() {
-        match vel {
-            Some(vel) => {
-                vel.0 += World::GRAVITY;
+    for ((vel, grav), pos) in worl
+        .vel
+        .iter_mut()
+        .zip(worl.grav.iter())
+        .zip(worl.pos.iter())
+    {
+        match (vel, grav, pos) {
+            (Some(vel), Some(_g), Some(pos)) if pos.1 > 0.0 => {
+                vel.1 += World::GRAVITY;
+            }
+            (Some(vel), Some(_g), None) => {
+                vel.1 += World::GRAVITY;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// If entity is underground and velocity is downward, reverse velocity
+fn bounce_floor(worl: &mut World) {
+    for (vel, pos) in worl.vel.iter_mut().zip(worl.pos.iter()) {
+        match (vel, pos) {
+            (Some(vel), Some(pos)) => {
+                if pos.1 < 0.0 && vel.1 < 0.0 {
+                    vel.1 = -vel.1;
+                }
             }
             _ => {}
         }
