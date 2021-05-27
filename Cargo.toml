@@ -5,4 +5,5 @@ authors = ["Andrew Dirksen <andrew@dirksen.com>"]
 edition = "2018"
 
 [dependencies]
-bevy = "0.4.0"
+hecs = "0.5.2"
+macroquad = "0.3.4"
