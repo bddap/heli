@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 hecs = "0.5.2"
 macroquad = "0.3.4"
+parry2d = "0.4.2"

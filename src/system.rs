@@ -2,6 +2,14 @@ use crate::constants::*;
 use core::f32::consts::{PI, TAU};
 use core::fmt::Debug;
 use macroquad::prelude::*;
+use parry2d::math::Isometry;
+use parry2d::math::Vector;
+use parry2d::query::time_of_impact;
+use parry2d::query::TOIStatus;
+use parry2d::query::TOI;
+use parry2d::shape::Ball;
+use parry2d::shape::Cuboid;
+use parry2d::shape::Shape;
 
 pub struct Heli {
     world: hecs::World,
@@ -16,29 +24,66 @@ impl Heli {
             Rot(0.),
             RotVel(0.),
             Vel((0., 0.).into()),
-            Pos((WORLD_WIDTH / 2., WORLD_WIDTH / 4.).into()),
+            Pos((WORLD_WIDTH / 2., WORLD_HEIGHT / 2.).into()),
             Grav,
             Drag,
             Boost(0.0),
             DARKBROWN,
+            Collides(Box::new(Ball::new(PLAYER_SIZE / 2.0))),
+            Wireframe(PLAYER_WIREFRAME),
         );
         world.spawn(player);
+
+        let player = (
+            Controls,
+            Rot(0.),
+            RotVel(0.),
+            Vel((0., 0.).into()),
+            Pos((WORLD_WIDTH / 3., WORLD_HEIGHT / 3.).into()),
+            Grav,
+            Drag,
+            Boost(0.0),
+            MAROON,
+            Collides(Box::new(Ball::new(PLAYER_SIZE / 2.0))),
+            Wireframe(PLAYER_WIREFRAME),
+        );
+        world.spawn(player);
+
+        let walls = [
+            (0.0, 0.0, WORLD_WIDTH, 0.0),
+            (0.0, 0.0, 0.0, WORLD_HEIGHT),
+            (WORLD_WIDTH, 0.0, 0.0, WORLD_HEIGHT),
+            (0.0, WORLD_HEIGHT, WORLD_WIDTH, 0.0),
+        ];
+        for (x, y, w, h) in &walls {
+            world.spawn((
+                Pos((*x, *y).into()),
+                Vel((0., 0.).into()),
+                Collides(Box::new(Cuboid::new(Vector::new(*w, *h)))),
+            ));
+        }
 
         Self { world }
     }
 
     pub fn update(&mut self) {
         self.controls();
-        self.newtonian();
         self.collision();
+        self.newtonian();
     }
 
     pub fn draw(&self) {
         clear_background(LIGHTGRAY);
-        for (_, (c, p, r)) in self.world.query::<(&Color, &Pos, &Rot)>().iter() {
+        for (_, (c, p, r, w)) in self
+            .world
+            .query::<(&Color, &Pos, &Rot, &Wireframe)>()
+            .iter()
+        {
             let q = r.quat();
-            draw_wireframe(PLAYER_WIREFRAME, p.0, q, PLAYER_SIZE, *c);
+            draw_wireframe(w.0, p.0, q, PLAYER_SIZE, *c);
         }
+
+        draw_text(&format!("fps: {}", get_fps()), 10.0, 30.0, 30.0, WHITE);
     }
 
     pub fn should_quit(&self) -> bool {
@@ -95,6 +140,79 @@ impl Heli {
         }
     }
 
+    fn collision(&mut self) {
+        let delta_t = get_frame_time();
+
+        let mut collisions: Vec<_> = Vec::new();
+        for (ia, (va, pa, ca)) in self.world.query::<(&Vel, &Pos, &Collides)>().iter() {
+            for (ib, (vb, pb, cb)) in self.world.query::<(&Vel, &Pos, &Collides)>().iter() {
+                if ia == ib {
+                    continue;
+                }
+                let impact = time_of_impact(
+                    &Isometry::translation(pa.0.x, pa.0.y),
+                    &Vector::new(va.0.x, va.0.y),
+                    &*ca.0,
+                    &Isometry::translation(pb.0.x, pb.0.y),
+                    &Vector::new(vb.0.x, vb.0.y),
+                    &*cb.0,
+                    delta_t,
+                )
+                .unwrap();
+                match impact {
+                    None => {}
+                    Some(TOI {
+                        toi,
+                        witness1: _,
+                        witness2: _,
+                        normal1,
+                        normal2,
+                        status: TOIStatus::Converged,
+                    }) => {
+                        collisions.push((ia, ib, toi, normal1, normal2));
+                    }
+                    Some(TOI { .. }) => {}
+                }
+            }
+        }
+        collisions.sort_by(|a, b| (a.0, a.1, a.2).partial_cmp(&(b.0, b.1, b.2)).unwrap());
+        collisions.dedup_by(|a, b| (a.0, a.1) == (b.0, b.1));
+        for (ia, _ib, toi, normal1, _normal2) in collisions {
+            let (vel, pos) = self
+                .world
+                .query_one_mut::<(&mut Vel, &mut Pos)>(ia)
+                .unwrap();
+            let v: &mut Vec2 = &mut vel.0;
+            let p: &mut Vec2 = &mut pos.0;
+            let n: Vec2 = (normal1.x, normal1.y).into();
+
+            // reflect velocity according to normal
+            // https://www.youtube.com/watch?v=naaeH1qbjdQ
+            let newvel = *v - v.dot(n) * n * 2.0;
+
+            // position is moved into the collision such that the next time velocity is applied
+            // position will be outside of the collision
+            // this makes for a fully elastic collision
+            *p += (*v - newvel) * toi;
+
+            *v = newvel;
+        }
+
+        // collision with air, also known as drag
+        let drag_mult = delta_t * DRAG_COEFFICIENT;
+        debug_assert!(drag_mult < 1.0);
+        for (_i, (v, Drag)) in self.world.query_mut::<(&mut Vel, &Drag)>() {
+            v.0 -= v.0 * drag_mult;
+        }
+
+        // rotational drag
+        let rdrag_mult = delta_t * ROTATIONAL_DRAG_COEFFICIENT;
+        debug_assert!(rdrag_mult < 1.0);
+        for (_i, (rv, Drag)) in self.world.query_mut::<(&mut RotVel, &Drag)>() {
+            rv.0 -= rv.0 * rdrag_mult;
+        }
+    }
+
     fn newtonian(&mut self) {
         let delta_t = get_frame_time();
 
@@ -116,35 +234,6 @@ impl Heli {
         // apply rotational velocity to rotation
         for (_id, (rv, r)) in self.world.query_mut::<(&RotVel, &mut Rot)>() {
             r.0 += rv.0 * delta_t;
-        }
-    }
-
-    fn collision(&mut self) {
-        let delta_t = get_frame_time();
-
-        // if item has gone through the floor, bounce
-        // this should be run after vel.system()
-        for (_i, (v, p)) in self.world.query_mut::<(&mut Vel, &mut Pos)>() {
-            if p.0.y <= 0.0 {
-                p.0.y = -p.0.y;
-                v.0.y = v.0.y.abs();
-                // arrest some horizontal velocity
-                v.0.x /= 2.0;
-            }
-        }
-
-        // collosion with air, also known as drag
-        let drag_mult = delta_t * DRAG_COEFFICIENT;
-        debug_assert!(drag_mult < 1.0);
-        for (_i, (v, Drag)) in self.world.query_mut::<(&mut Vel, &Drag)>() {
-            v.0 -= v.0 * drag_mult;
-        }
-
-        // rotational drag
-        let rdrag_mult = delta_t * ROTATIONAL_DRAG_COEFFICIENT;
-        debug_assert!(rdrag_mult < 1.0);
-        for (_i, (rv, Drag)) in self.world.query_mut::<(&mut RotVel, &Drag)>() {
-            rv.0 -= rv.0 * rdrag_mult;
         }
     }
 }
@@ -181,6 +270,11 @@ pub struct Boost(pub f32);
 
 #[derive(Debug)]
 pub struct Quit;
+
+pub struct Collides(Box<dyn Shape>);
+
+#[derive(Debug)]
+pub struct Wireframe(&'static [(f32, f32)]);
 
 fn draw_wireframe(
     wireframe: &[(f32, f32)],
