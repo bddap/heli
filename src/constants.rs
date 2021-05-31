@@ -8,7 +8,7 @@ pub const ROTATIONAL_DRAG_COEFFICIENT: f32 = 2.0;
 pub const DRAG_COEFFICIENT: f32 = 0.1;
 
 /// meters per second per second
-pub const BOOST_POWER: f32 = 18.0;
+pub const BOOST_POWER: f32 = 30.0;
 
 /// meters width, height
 pub const PLAYER_SIZE: f32 = 10.0;
@@ -23,3 +23,8 @@ pub const PLAYER_WIREFRAME: &[(f32, f32)] = &[
     (0.5, -0.5),
     (0.0, 0.0),
 ];
+
+/// how hard the ship should try to point upward when boosting up
+/// this value is multiplied by rotational error to determine a
+/// rotational force
+pub const AUTO_UP_POWER: f32 = 6.0;

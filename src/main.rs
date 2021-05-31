@@ -1,3 +1,5 @@
+extern crate core;
+
 use macroquad::prelude::*;
 
 mod constants;

@@ -1,5 +1,5 @@
-use crate::constants;
-use crate::constants::GRAVITY;
+use crate::constants::*;
+use core::f32::consts::{PI, TAU};
 use core::fmt::Debug;
 use macroquad::prelude::*;
 
@@ -16,7 +16,7 @@ impl Heli {
             Rot(0.),
             RotVel(0.),
             Vel((0., 0.).into()),
-            Pos((constants::WORLD_WIDTH / 2., constants::WORLD_WIDTH / 4.).into()),
+            Pos((WORLD_WIDTH / 2., WORLD_WIDTH / 4.).into()),
             Grav,
             Drag,
             Boost(0.0),
@@ -37,13 +37,7 @@ impl Heli {
         clear_background(LIGHTGRAY);
         for (_, (c, p, r)) in self.world.query::<(&Color, &Pos, &Rot)>().iter() {
             let q = r.quat();
-            draw_wireframe(
-                constants::PLAYER_WIREFRAME,
-                p.0,
-                q,
-                constants::PLAYER_SIZE,
-                *c,
-            );
+            draw_wireframe(PLAYER_WIREFRAME, p.0, q, PLAYER_SIZE, *c);
         }
     }
 
@@ -59,10 +53,10 @@ impl Heli {
         // boost
         let mut boost = 0.0;
         if is_key_down(KeyCode::Up) | is_key_down(KeyCode::W) {
-            boost += crate::constants::BOOST_POWER;
+            boost += BOOST_POWER;
         }
         if is_key_down(KeyCode::Down) | is_key_down(KeyCode::S) {
-            boost -= crate::constants::BOOST_POWER;
+            boost -= BOOST_POWER;
         }
         for (_id, (_controls, b)) in self.world.query_mut::<(&Controls, &mut Boost)>() {
             b.0 = boost;
@@ -71,14 +65,28 @@ impl Heli {
         // rotation accel
         let mut rot_accel = 0.0;
         if is_key_down(KeyCode::Left) | is_key_down(KeyCode::A) {
-            rot_accel += crate::constants::ROTATIONAL_ACCELERATION;
+            rot_accel += ROTATIONAL_ACCELERATION;
         }
         if is_key_down(KeyCode::Right) | is_key_down(KeyCode::D) {
-            rot_accel -= crate::constants::ROTATIONAL_ACCELERATION;
+            rot_accel -= ROTATIONAL_ACCELERATION;
         }
         rot_accel *= delta_t;
         for (_id, (_controls, rv)) in self.world.query_mut::<(&Controls, &mut RotVel)>() {
             rv.0 += rot_accel;
+        }
+
+        // when boosting up, rotation should tend upwards, it feels better that way
+        for (_id, (_controls, rv, r, b)) in self
+            .world
+            .query_mut::<(&Controls, &mut RotVel, &Rot, &Boost)>()
+        {
+            if b.0 >= 0.1 {
+                let r = (r.0 + PI).rem_euclid(TAU) - PI;
+                debug_assert!(r >= -PI - 0.0001);
+                debug_assert!(r <= PI + 0.0001);
+                let rotvel_delta = -r * AUTO_UP_POWER * delta_t;
+                rv.0 += rotvel_delta;
+            }
         }
 
         // quit
@@ -126,14 +134,14 @@ impl Heli {
         }
 
         // collosion with air, also known as drag
-        let drag_mult = delta_t * constants::DRAG_COEFFICIENT;
+        let drag_mult = delta_t * DRAG_COEFFICIENT;
         debug_assert!(drag_mult < 1.0);
         for (_i, (v, Drag)) in self.world.query_mut::<(&mut Vel, &Drag)>() {
             v.0 -= v.0 * drag_mult;
         }
 
         // rotational drag
-        let rdrag_mult = delta_t * constants::ROTATIONAL_DRAG_COEFFICIENT;
+        let rdrag_mult = delta_t * ROTATIONAL_DRAG_COEFFICIENT;
         debug_assert!(rdrag_mult < 1.0);
         for (_i, (rv, Drag)) in self.world.query_mut::<(&mut RotVel, &Drag)>() {
             rv.0 -= rv.0 * rdrag_mult;
@@ -183,7 +191,7 @@ fn draw_wireframe(
 ) {
     debug_assert!(!wireframe.is_empty());
     let sw = screen_width();
-    let screenscale = sw / constants::WORLD_WIDTH;
+    let screenscale = sw / WORLD_WIDTH;
     let sh = screen_height();
 
     let to_screen = |point: (f32, f32)| {
