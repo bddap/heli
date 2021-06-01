@@ -1,15 +1,19 @@
 use crate::constants::*;
 use core::f32::consts::{PI, TAU};
 use core::fmt::Debug;
+use hecs::Entity;
 use macroquad::prelude::*;
+use macroquad::ui::hash;
+use macroquad::ui::root_ui;
+use macroquad::ui::widgets::Window;
+use macroquad::ui::Ui;
 use parry2d::math::Isometry;
+use parry2d::math::Point;
 use parry2d::math::Vector;
 use parry2d::query::time_of_impact;
 use parry2d::query::TOIStatus;
 use parry2d::query::TOI;
-use parry2d::shape::Ball;
-use parry2d::shape::Cuboid;
-use parry2d::shape::Shape;
+use parry2d::shape::Polyline;
 
 pub struct Heli {
     world: hecs::World,
@@ -19,17 +23,20 @@ impl Heli {
     pub fn new() -> Self {
         let mut world = hecs::World::new();
 
+        let camera = (Camera2D::default(),);
+        world.spawn(camera);
+
         let player = (
             Controls,
             Rot(0.),
             RotVel(0.),
-            Vel((0., 0.).into()),
-            Pos((WORLD_WIDTH / 2., WORLD_HEIGHT / 2.).into()),
+            Vel(vec2(0., 0.)),
+            Pos(vec2(0.0, 0.0)),
             Grav,
             Drag,
             Boost(0.0),
             DARKBROWN,
-            Collides(Box::new(Ball::new(PLAYER_SIZE / 2.0))),
+            Collides,
             Wireframe(PLAYER_WIREFRAME),
         );
         world.spawn(player);
@@ -39,29 +46,25 @@ impl Heli {
             Rot(0.),
             RotVel(0.),
             Vel((0., 0.).into()),
-            Pos((WORLD_WIDTH / 3., WORLD_HEIGHT / 3.).into()),
+            Pos(vec2(PLAYER_SIZE, PLAYER_SIZE)),
             Grav,
             Drag,
             Boost(0.0),
             MAROON,
-            Collides(Box::new(Ball::new(PLAYER_SIZE / 2.0))),
+            Collides,
             Wireframe(PLAYER_WIREFRAME),
         );
         world.spawn(player);
 
-        let walls = [
-            (0.0, 0.0, WORLD_WIDTH, 0.0),
-            (0.0, 0.0, 0.0, WORLD_HEIGHT),
-            (WORLD_WIDTH, 0.0, 0.0, WORLD_HEIGHT),
-            (0.0, WORLD_HEIGHT, WORLD_WIDTH, 0.0),
-        ];
-        for (x, y, w, h) in &walls {
-            world.spawn((
-                Pos((*x, *y).into()),
-                Vel((0., 0.).into()),
-                Collides(Box::new(Cuboid::new(Vector::new(*w, *h)))),
-            ));
-        }
+        let walls = (
+            Collides,
+            Wireframe(BOUNDS_WIREFRAME),
+            Pos(vec2(0., 0.)),
+            Vel(vec2(0., 0.)),
+            Rot(0.),
+            GREEN,
+        );
+        world.spawn(walls);
 
         Self { world }
     }
@@ -70,19 +73,46 @@ impl Heli {
         self.controls();
         self.collision();
         self.newtonian();
+        self.msc();
+    }
+
+    pub fn ui(&mut self) {
+        let ui: &mut Ui = &mut root_ui();
+
+        for (_, (camera,)) in self.world.query_mut::<(&mut Camera2D,)>() {
+            Window::new(
+                hash!(),
+                vec2(10.0, 40.0),
+                vec2(screen_width() / 8.0, screen_height() / 2.0),
+            )
+            .ui(ui, |ui| {
+                let range = -5.0..5.0;
+                ui.slider(hash!(), "rotation", range.clone(), &mut camera.rotation);
+                ui.slider(hash!(), "zoomx", 0.01..10.0, &mut camera.zoom.x);
+                camera.zoom.y = camera.zoom.x / screen_height() * screen_width();
+                ui.slider(hash!(), "targetx", range.clone(), &mut camera.target.x);
+                ui.slider(hash!(), "targety", range.clone(), &mut camera.target.y);
+                ui.slider(hash!(), "offsetx", range.clone(), &mut camera.offset.x);
+                ui.slider(hash!(), "offsety", range.clone(), &mut camera.offset.y);
+            });
+        }
     }
 
     pub fn draw(&self) {
         clear_background(LIGHTGRAY);
-        for (_, (c, p, r, w)) in self
-            .world
-            .query::<(&Color, &Pos, &Rot, &Wireframe)>()
-            .iter()
-        {
-            let q = r.quat();
-            draw_wireframe(w.0, p.0, q, PLAYER_SIZE, *c);
+        for (_, (camera,)) in self.world.query::<(&Camera2D,)>().iter() {
+            set_camera(camera);
+            for (_, (c, p, r, w)) in self
+                .world
+                .query::<(&Color, &Pos, &Rot, &Wireframe)>()
+                .iter()
+            {
+                let q = r.quat();
+                draw_wireframe(w.0, p.0, q, *c);
+            }
         }
 
+        set_default_camera();
         draw_text(&format!("fps: {}", get_fps()), 10.0, 30.0, 30.0, WHITE);
     }
 
@@ -143,41 +173,59 @@ impl Heli {
     fn collision(&mut self) {
         let delta_t = get_frame_time();
 
-        let mut collisions: Vec<_> = Vec::new();
-        for (ia, (va, pa, ca)) in self.world.query::<(&Vel, &Pos, &Collides)>().iter() {
-            for (ib, (vb, pb, cb)) in self.world.query::<(&Vel, &Pos, &Collides)>().iter() {
+        let mut collisions: Vec<(Entity, Entity, TOI, f32)> = Vec::new();
+        for (ia, (Vel(va), Pos(pa), _, Wireframe(wfa), Rot(ra))) in self
+            .world
+            .query::<(&Vel, &Pos, &Collides, &Wireframe, &Rot)>()
+            .iter()
+        {
+            for (ib, (Vel(vb), Pos(pb), _, Wireframe(wfb), Rot(rb))) in self
+                .world
+                .query::<(&Vel, &Pos, &Collides, &Wireframe, &Rot)>()
+                .iter()
+            {
                 if ia == ib {
                     continue;
                 }
                 let impact = time_of_impact(
-                    &Isometry::translation(pa.0.x, pa.0.y),
-                    &Vector::new(va.0.x, va.0.y),
-                    &*ca.0,
-                    &Isometry::translation(pb.0.x, pb.0.y),
-                    &Vector::new(vb.0.x, vb.0.y),
-                    &*cb.0,
+                    &Isometry::new([pa.x, pa.y].into(), *ra),
+                    &Vector::new(va.x, va.y),
+                    &wireframe_to_polyline(wfa),
+                    &Isometry::new([pb.x, pb.y].into(), *rb),
+                    &Vector::new(vb.x, vb.y),
+                    &wireframe_to_polyline(wfb),
                     delta_t,
                 )
                 .unwrap();
                 match impact {
                     None => {}
-                    Some(TOI {
-                        toi,
-                        witness1: _,
-                        witness2: _,
-                        normal1,
-                        normal2,
-                        status: TOIStatus::Converged,
-                    }) => {
-                        collisions.push((ia, ib, toi, normal1, normal2));
+                    Some(toi) => {
+                        debug_assert!(toi.status != TOIStatus::Failed);
+                        collisions.push((ia, ib, toi, *ra));
                     }
-                    Some(TOI { .. }) => {}
                 }
             }
         }
-        collisions.sort_by(|a, b| (a.0, a.1, a.2).partial_cmp(&(b.0, b.1, b.2)).unwrap());
+        collisions.sort_by(|a, b| {
+            (a.0, a.1, a.2.toi)
+                .partial_cmp(&(b.0, b.1, b.2.toi))
+                .unwrap()
+        });
         collisions.dedup_by(|a, b| (a.0, a.1) == (b.0, b.1));
-        for (ia, _ib, toi, normal1, _normal2) in collisions {
+        for (
+            ia,
+            _ib,
+            TOI {
+                toi,
+                witness1: _,
+                witness2: _,
+                normal1,
+                normal2: _,
+                status: _,
+            },
+            ra,
+        ) in collisions
+        {
             let (vel, pos) = self
                 .world
                 .query_one_mut::<(&mut Vel, &mut Pos)>(ia)
@@ -185,6 +233,16 @@ impl Heli {
             let v: &mut Vec2 = &mut vel.0;
             let p: &mut Vec2 = &mut pos.0;
             let n: Vec2 = (normal1.x, normal1.y).into();
+            // get normal in world space
+            let n = Rot(ra).quat().mul_vec3(n.extend(0.0)).truncate();
+
+            // perhaps if this ends up being janky, you can use witness1 to calculate normal
+
+            if v.dot(n) <= 0.0 {
+                // velocity is already pointing away from normal
+                // no need to bounce
+                continue;
+            }
 
             // reflect velocity according to normal
             // https://www.youtube.com/watch?v=naaeH1qbjdQ
@@ -196,6 +254,11 @@ impl Heli {
             *p += (*v - newvel) * toi;
 
             *v = newvel;
+
+            // but wait, there's more. we now want to lose some energy
+            *p = *p + *v * delta_t; // move pos to where we know it will be at end of tick
+            *v = *v * (1.0 - COLLISION_ENERGY_LOSS);
+            *p = *p - *v * delta_t; // move p back so that is properly placed at end of tick
         }
 
         // collision with air, also known as drag
@@ -236,6 +299,13 @@ impl Heli {
             r.0 += rv.0 * delta_t;
         }
     }
+
+    fn msc(&mut self) {
+        // maintain aspect ratio
+        for (_, (camera,)) in self.world.query_mut::<(&mut Camera2D,)>() {
+            camera.zoom = vec2(1., screen_width() / screen_height());
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -271,36 +341,43 @@ pub struct Boost(pub f32);
 #[derive(Debug)]
 pub struct Quit;
 
-pub struct Collides(Box<dyn Shape>);
+/// collisions are calculated using wireframe
+pub struct Collides;
 
 #[derive(Debug)]
 pub struct Wireframe(&'static [(f32, f32)]);
 
-fn draw_wireframe(
-    wireframe: &[(f32, f32)],
-    position: Vec2,
-    rotation: Quat,
-    scale: f32,
-    color: Color,
-) {
+fn draw_wireframe(wireframe: &[(f32, f32)], position: Vec2, rotation: Quat, color: Color) {
     debug_assert!(!wireframe.is_empty());
-    let sw = screen_width();
-    let screenscale = sw / WORLD_WIDTH;
-    let sh = screen_height();
+    // the screen is 2 units tall (-1.0 to 1.0)
+    // the world is WORLD_HEIGHT meters wide
+    let meters_per_screen = 1.0 / WORLD_HEIGHT;
+    let line_width_meters = 1.0;
 
     let to_screen = |point: (f32, f32)| {
         let mut p: Vec2 = point.into();
-        p *= scale;
         p = rotation.mul_vec3(p.extend(0.0)).truncate();
         p += position;
-        p *= screenscale;
-        p.y = sh - p.y;
+        p *= meters_per_screen;
         p
     };
 
     let screen_coords = wireframe.into_iter().cloned().map(to_screen);
-    let shifted = screen_coords.clone().cycle().skip(1).take(wireframe.len());
-    for (a, b) in screen_coords.zip(shifted) {
-        draw_line(a.x, a.y, b.x, b.y, 2., color);
+    for (a, b) in screen_coords.clone().zip(screen_coords.skip(1)) {
+        draw_line(
+            a.x,
+            a.y,
+            b.x,
+            b.y,
+            meters_per_screen * line_width_meters,
+            color,
+        );
     }
+}
+
+fn wireframe_to_polyline(wf: &[(f32, f32)]) -> Polyline {
+    Polyline::new(
+        wf.iter().cloned().map(|(x, y)| Point::new(x, y)).collect(),
+        None,
+    )
 }
