@@ -3,9 +3,34 @@ name: Rust
 on: [push]
 
 jobs:
-  build:
+  build-wasm:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
 
+      - name: Install latest rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          default: true
+          override: true
+          target: wasm32-unknown-unknown
+
+      - uses: extractions/setup-just@v1
+
+      - name: Build
+        run: just web-build-release
+
+      - name: Deploy To Gh Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./web
+          force_orphan: true
+
+  build-linux:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v1
@@ -33,7 +58,6 @@ jobs:
 
   build-win:
     runs-on: windows-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v1
@@ -58,7 +82,6 @@ jobs:
 
   build-mac:
     runs-on: macos-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v1
