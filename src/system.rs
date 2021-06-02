@@ -3,18 +3,10 @@ use core::f32::consts::{PI, TAU};
 use core::fmt::Debug;
 use hecs::Entity;
 use macroquad::prelude::*;
-use macroquad::ui::hash;
-use macroquad::ui::root_ui;
-use macroquad::ui::widgets::Window;
-use macroquad::ui::Ui;
-use parry2d::math::Isometry;
-use parry2d::math::Point;
-use parry2d::math::Vector;
-use parry2d::query::time_of_impact;
-use parry2d::query::TOIStatus;
-use parry2d::query::TOI;
-use parry2d::shape::Polyline;
-use parry2d::shape::Shape;
+use macroquad::ui::{hash, root_ui, widgets::Window, Ui};
+use parry2d::math::{Isometry, Point, Vector};
+use parry2d::query::{time_of_impact, TOIStatus, TOI};
+use parry2d::shape::{Polyline, Shape};
 
 pub struct Heli {
     world: hecs::World,
@@ -77,6 +69,8 @@ impl Heli {
         );
         world.spawn(walls);
 
+        world.spawn((Settings::default(),));
+
         Self { world }
     }
 
@@ -90,22 +84,8 @@ impl Heli {
     pub fn ui(&mut self) {
         let ui: &mut Ui = &mut root_ui();
 
-        for (_, (camera,)) in self.world.query_mut::<(&mut Camera2D,)>() {
-            Window::new(
-                hash!(),
-                vec2(10.0, 40.0),
-                vec2(screen_width() / 8.0, screen_height() / 2.0),
-            )
-            .ui(ui, |ui| {
-                let range = -5.0..5.0;
-                ui.slider(hash!(), "rotation", range.clone(), &mut camera.rotation);
-                ui.slider(hash!(), "zoomx", 0.01..10.0, &mut camera.zoom.x);
-                camera.zoom.y = camera.zoom.x / screen_height() * screen_width();
-                ui.slider(hash!(), "targetx", range.clone(), &mut camera.target.x);
-                ui.slider(hash!(), "targety", range.clone(), &mut camera.target.y);
-                ui.slider(hash!(), "offsetx", range.clone(), &mut camera.offset.x);
-                ui.slider(hash!(), "offsety", range.clone(), &mut camera.offset.y);
-            });
+        for (_, (settings,)) in self.world.query::<(&mut Settings,)>().iter() {
+            Window::new(hash!(), vec2(10.0, 40.0), vec2(400.0, 500.0)).ui(ui, |ui| settings.ui(ui));
         }
     }
 
@@ -130,30 +110,42 @@ impl Heli {
     pub fn should_quit(&self) -> bool {
         self.world.query::<(&Quit,)>().into_iter().next().is_some()
     }
+
+    fn get_settings(&mut self) -> Settings {
+        let count = self.world.query_mut::<(&Settings,)>().into_iter().count();
+        assert!(count <= 1);
+        self.world
+            .query_mut::<(&Settings,)>()
+            .into_iter()
+            .next()
+            .map(|(_, (s,))| s.clone())
+            .unwrap_or_default()
+    }
 }
 
 impl Heli {
     fn controls(&mut self) {
         let delta_t = get_frame_time();
+        let settings = self.get_settings();
 
         // boost
         for (_id, (controls, Boost(b))) in self.world.query_mut::<(&Controls, &mut Boost)>() {
             *b = 0.0;
             if is_key_down(controls.up) {
-                *b += BOOST_POWER;
+                *b += settings.boost_power;
             }
             if is_key_down(controls.down) {
-                *b -= BOOST_POWER;
+                *b -= settings.boost_power;
             }
         }
 
         // rotation accel
         for (_id, (controls, RotVel(rv))) in self.world.query_mut::<(&Controls, &mut RotVel)>() {
             if is_key_down(controls.left) {
-                *rv += ROTATIONAL_ACCELERATION * delta_t;
+                *rv += settings.rotational_acceleration * delta_t;
             }
             if is_key_down(controls.right) {
-                *rv -= ROTATIONAL_ACCELERATION * delta_t;
+                *rv -= settings.rotational_acceleration * delta_t;
             }
         }
 
@@ -166,7 +158,7 @@ impl Heli {
                 let r = (r.0 + PI).rem_euclid(TAU) - PI;
                 debug_assert!(r >= -PI - 0.0001);
                 debug_assert!(r <= PI + 0.0001);
-                let rotvel_delta = -r * AUTO_UP_POWER * delta_t;
+                let rotvel_delta = -r * settings.auto_up_power * delta_t;
                 rv.0 += rotvel_delta;
             }
         }
@@ -179,6 +171,7 @@ impl Heli {
 
     fn collision(&mut self) {
         let delta_t = get_frame_time();
+        let settings = self.get_settings();
 
         let mut collisions: Vec<(Entity, Entity, TOI, f32)> = Vec::new();
         for (ia, (Vel(va), Pos(pa), Collides(ca), Rot(ra))) in
@@ -260,19 +253,19 @@ impl Heli {
 
             // but wait, there's more. we now want to lose some energy
             *p = *p + *v * delta_t; // move pos to where we know it will be at end of tick
-            *v = *v * (1.0 - COLLISION_ENERGY_LOSS);
+            *v = *v * (1.0 - settings.collision_energy_loss);
             *p = *p - *v * delta_t; // move p back so that is properly placed at end of tick
         }
 
         // collision with air, also known as drag
-        let drag_mult = delta_t * DRAG_COEFFICIENT;
+        let drag_mult = delta_t * settings.drag_coefficient;
         debug_assert!(drag_mult < 1.0);
         for (_i, (v, Drag)) in self.world.query_mut::<(&mut Vel, &Drag)>() {
             v.0 -= v.0 * drag_mult;
         }
 
         // rotational drag
-        let rdrag_mult = delta_t * ROTATIONAL_DRAG_COEFFICIENT;
+        let rdrag_mult = delta_t * settings.rotational_drag_coefficient;
         debug_assert!(rdrag_mult < 1.0);
         for (_i, (rv, Drag)) in self.world.query_mut::<(&mut RotVel, &Drag)>() {
             rv.0 -= rv.0 * rdrag_mult;
@@ -281,20 +274,21 @@ impl Heli {
 
     fn newtonian(&mut self) {
         let delta_t = get_frame_time();
+        let settings = self.get_settings();
+
+        // apply velocity to position
+        for (_id, (v, p)) in self.world.query_mut::<(&Vel, &mut Pos)>() {
+            p.0 += v.0 * delta_t;
+        }
 
         // apply gravity to velocity
         for (_id, (Grav, v)) in self.world.query_mut::<(&Grav, &mut Vel)>() {
-            v.0.y += GRAVITY * delta_t;
+            v.0.y += settings.gravity * delta_t;
         }
 
         // apply boost to velocity
         for (_id, (b, r, v)) in self.world.query_mut::<(&Boost, &Rot, &mut Vel)>() {
             v.0 += r.quat().mul_vec3(Vec3::Y * b.0 * delta_t).truncate();
-        }
-
-        // apply velocity to position
-        for (_id, (v, p)) in self.world.query_mut::<(&Vel, &mut Pos)>() {
-            p.0 += v.0 * delta_t;
         }
 
         // apply rotational velocity to rotation
