@@ -109,6 +109,14 @@ pub const BOUNDS_WIREFRAME: &[(f32, f32)] = &[
     (-1. * WORLD_HEIGHT / 2., -1. * WORLD_HEIGHT / 2.),
 ];
 
+pub const TRASH_WIREFRAME: &[(f32, f32)] = &[
+    (-5., -5.),
+    (-5., 5.0),
+    (5.0, 5.0),
+    (5.0, -5.),
+    (-5., -5.),
+];
+
 pub fn color_pallet() -> [Color; 10] {
     [
         color(0x58, 0x2f, 0x0e),

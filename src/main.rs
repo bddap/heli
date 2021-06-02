@@ -1,10 +1,13 @@
 extern crate core;
+extern crate alloc;
 
 use macroquad::prelude::*;
 
 mod constants;
 mod system;
 mod util;
+mod spawner;
+mod mortal;
 
 #[macroquad::main(window_conf)]
 async fn main() {

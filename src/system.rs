@@ -1,12 +1,17 @@
 use crate::constants::*;
+use crate::mortal::Mortal;
+use crate::spawner::firetrail;
+use crate::spawner::BoostToots;
+use crate::util::wireframe_to_polyline;
+use alloc::sync::Arc;
 use core::f32::consts::{PI, TAU};
 use core::fmt::Debug;
 use hecs::Entity;
 use macroquad::prelude::*;
 use macroquad::ui::{hash, root_ui, widgets::Window, Ui};
-use parry2d::math::{Isometry, Point, Vector};
+use parry2d::math::{Isometry, Vector};
 use parry2d::query::{time_of_impact, TOIStatus, TOI};
-use parry2d::shape::{Polyline, Shape};
+use parry2d::shape::Shape;
 
 pub struct Heli {
     world: hecs::World,
@@ -19,7 +24,8 @@ impl Heli {
         let camera = (Camera2D::default(),);
         world.spawn(camera);
 
-        let player = (
+        // player 1
+        world.spawn((
             Controls {
                 up: KeyCode::Up,
                 down: KeyCode::Down,
@@ -36,10 +42,15 @@ impl Heli {
             color_pallet()[0],
             Collides(Box::new(wireframe_to_polyline(PLAYER_WIREFRAME))),
             Wireframe(PLAYER_WIREFRAME),
-        );
-        world.spawn(player);
+            BoostToots {
+                spawner: Arc::new(firetrail),
+                every: 1.0 / 60.,
+                next_toot: get_time(),
+            },
+        ));
 
-        let player = (
+        // player 2
+        world.spawn((
             Controls {
                 up: KeyCode::W,
                 down: KeyCode::S,
@@ -56,8 +67,12 @@ impl Heli {
             color_pallet()[1],
             Collides(Box::new(wireframe_to_polyline(PLAYER_WIREFRAME))),
             Wireframe(PLAYER_WIREFRAME),
-        );
-        world.spawn(player);
+            BoostToots {
+                spawner: Arc::new(firetrail),
+                every: 1.0 / 60.,
+                next_toot: get_time(),
+            },
+        ));
 
         let walls = (
             Collides(Box::new(wireframe_to_polyline(BOUNDS_WIREFRAME))),
@@ -79,6 +94,8 @@ impl Heli {
         self.controls();
         self.collision();
         self.newtonian();
+        BoostToots::system(&mut self.world);
+        Mortal::system(&mut self.world);
         self.msc();
     }
 
@@ -329,7 +346,7 @@ pub struct Controls {
 pub struct Rot(pub f32);
 
 impl Rot {
-    fn quat(&self) -> Quat {
+    pub fn quat(&self) -> Quat {
         Quat::from_rotation_z(self.0)
     }
 }
@@ -337,10 +354,10 @@ impl Rot {
 #[derive(Debug)]
 pub struct RotVel(pub f32);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Vel(pub Vec2);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Pos(pub Vec2);
 
 #[derive(Debug)]
@@ -349,19 +366,19 @@ pub struct Grav;
 #[derive(Debug)]
 pub struct Drag;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Boost(pub f32);
 
 #[derive(Debug)]
 pub struct Quit;
 
-pub struct Collides(Box<dyn Shape>);
+pub struct Collides(pub Box<dyn Shape>);
 
 #[derive(Debug)]
-pub struct Wireframe(&'static [(f32, f32)]);
+pub struct Wireframe(pub &'static [(f32, f32)]);
 
 #[derive(Debug, Clone)]
-pub struct Background(Color);
+pub struct Background(pub Color);
 
 fn draw_wireframe(wireframe: &[(f32, f32)], position: Vec2, rotation: Quat, color: Color) {
     debug_assert!(!wireframe.is_empty());
@@ -389,11 +406,4 @@ fn draw_wireframe(wireframe: &[(f32, f32)], position: Vec2, rotation: Quat, colo
             color,
         );
     }
-}
-
-fn wireframe_to_polyline(wf: &[(f32, f32)]) -> Polyline {
-    Polyline::new(
-        wf.iter().cloned().map(|(x, y)| Point::new(x, y)).collect(),
-        None,
-    )
 }
