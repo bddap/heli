@@ -1,3 +1,5 @@
+use crate::util::color;
+use macroquad::color::Color;
 use macroquad::ui::{hash, Ui};
 
 #[derive(Debug, Clone)]
@@ -106,6 +108,21 @@ pub const BOUNDS_WIREFRAME: &[(f32, f32)] = &[
     (1.0 * WORLD_HEIGHT / 2., -1. * WORLD_HEIGHT / 2.),
     (-1. * WORLD_HEIGHT / 2., -1. * WORLD_HEIGHT / 2.),
 ];
+
+pub fn color_pallet() -> [Color; 10] {
+    [
+        color(0x58, 0x2f, 0x0e),
+        color(0x7f, 0x4f, 0x24),
+        color(0x93, 0x66, 0x39),
+        color(0xa6, 0x8a, 0x64),
+        color(0xb6, 0xad, 0x90),
+        color(0xc2, 0xc5, 0xaa),
+        color(0xa4, 0xac, 0x86),
+        color(0x65, 0x6d, 0x4a),
+        color(0x41, 0x48, 0x33),
+        color(0x33, 0x3d, 0x29),
+    ]
+}
 
 #[test]
 fn cel() {

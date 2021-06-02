@@ -1,5 +1,10 @@
-pub fn meter_coords_to_pixel_coords(xy: (f32, f32), window_size: &LogicalSize) -> (f32, f32) {
-    let (x, y) = xy;
-    let scale = window_size.height as f32 / 100.0;
-    (x * scale, y * scale)
+use macroquad::color::Color;
+
+pub fn color(r: u8, g: u8, b: u8) -> Color {
+    Color {
+        r: r as f32 / 255.,
+        g: g as f32 / 255.,
+        b: b as f32 / 255.,
+        a: 255.0,
+    }
 }

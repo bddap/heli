@@ -33,7 +33,7 @@ impl Heli {
             Grav,
             Drag,
             Boost(0.0),
-            DARKBROWN,
+            color_pallet()[0],
             Collides(Box::new(wireframe_to_polyline(PLAYER_WIREFRAME))),
             Wireframe(PLAYER_WIREFRAME),
         );
@@ -53,7 +53,7 @@ impl Heli {
             Grav,
             Drag,
             Boost(0.0),
-            MAROON,
+            color_pallet()[1],
             Collides(Box::new(wireframe_to_polyline(PLAYER_WIREFRAME))),
             Wireframe(PLAYER_WIREFRAME),
         );
@@ -65,11 +65,12 @@ impl Heli {
             Pos(vec2(0., 0.)),
             Vel(vec2(0., 0.)),
             Rot(0.),
-            GREEN,
+            color_pallet()[2],
         );
         world.spawn(walls);
 
         world.spawn((Settings::default(),));
+        world.spawn((Background(color_pallet()[3]),));
 
         Self { world }
     }
@@ -90,7 +91,7 @@ impl Heli {
     }
 
     pub fn draw(&self) {
-        clear_background(LIGHTGRAY);
+        clear_background(self.get_one::<Background>().unwrap_or(Background(GRAY)).0);
         for (_, (camera,)) in self.world.query::<(&Camera2D,)>().iter() {
             set_camera(camera);
             for (_, (c, p, r, w)) in self
@@ -109,6 +110,17 @@ impl Heli {
 
     pub fn should_quit(&self) -> bool {
         self.world.query::<(&Quit,)>().into_iter().next().is_some()
+    }
+
+    /// panics if there is more than one entity with component T
+    fn get_one<T: 'static + Clone + Sync + Send>(&self) -> Option<T> {
+        let count = self.world.query::<(&T,)>().iter().count();
+        assert!(count <= 1);
+        self.world
+            .query::<(&T,)>()
+            .iter()
+            .next()
+            .map(|(_, (t,))| t.clone())
     }
 
     fn get_settings(&mut self) -> Settings {
@@ -347,6 +359,9 @@ pub struct Collides(Box<dyn Shape>);
 
 #[derive(Debug)]
 pub struct Wireframe(&'static [(f32, f32)]);
+
+#[derive(Debug, Clone)]
+pub struct Background(Color);
 
 fn draw_wireframe(wireframe: &[(f32, f32)], position: Vec2, rotation: Quat, color: Color) {
     debug_assert!(!wireframe.is_empty());

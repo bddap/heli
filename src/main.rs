@@ -4,6 +4,7 @@ use macroquad::prelude::*;
 
 mod constants;
 mod system;
+mod util;
 
 #[macroquad::main(window_conf)]
 async fn main() {
