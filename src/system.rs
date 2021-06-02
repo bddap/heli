@@ -14,6 +14,7 @@ use parry2d::query::time_of_impact;
 use parry2d::query::TOIStatus;
 use parry2d::query::TOI;
 use parry2d::shape::Polyline;
+use parry2d::shape::Shape;
 
 pub struct Heli {
     world: hecs::World,
@@ -27,7 +28,12 @@ impl Heli {
         world.spawn(camera);
 
         let player = (
-            Controls,
+            Controls {
+                up: KeyCode::Up,
+                down: KeyCode::Down,
+                left: KeyCode::Left,
+                right: KeyCode::Right,
+            },
             Rot(0.),
             RotVel(0.),
             Vel(vec2(0., 0.)),
@@ -36,13 +42,18 @@ impl Heli {
             Drag,
             Boost(0.0),
             DARKBROWN,
-            Collides,
+            Collides(Box::new(wireframe_to_polyline(PLAYER_WIREFRAME))),
             Wireframe(PLAYER_WIREFRAME),
         );
         world.spawn(player);
 
         let player = (
-            Controls,
+            Controls {
+                up: KeyCode::W,
+                down: KeyCode::S,
+                left: KeyCode::A,
+                right: KeyCode::D,
+            },
             Rot(0.),
             RotVel(0.),
             Vel((0., 0.).into()),
@@ -51,13 +62,13 @@ impl Heli {
             Drag,
             Boost(0.0),
             MAROON,
-            Collides,
+            Collides(Box::new(wireframe_to_polyline(PLAYER_WIREFRAME))),
             Wireframe(PLAYER_WIREFRAME),
         );
         world.spawn(player);
 
         let walls = (
-            Collides,
+            Collides(Box::new(wireframe_to_polyline(BOUNDS_WIREFRAME))),
             Wireframe(BOUNDS_WIREFRAME),
             Pos(vec2(0., 0.)),
             Vel(vec2(0., 0.)),
@@ -126,28 +137,24 @@ impl Heli {
         let delta_t = get_frame_time();
 
         // boost
-        let mut boost = 0.0;
-        if is_key_down(KeyCode::Up) | is_key_down(KeyCode::W) {
-            boost += BOOST_POWER;
-        }
-        if is_key_down(KeyCode::Down) | is_key_down(KeyCode::S) {
-            boost -= BOOST_POWER;
-        }
-        for (_id, (_controls, b)) in self.world.query_mut::<(&Controls, &mut Boost)>() {
-            b.0 = boost;
+        for (_id, (controls, Boost(b))) in self.world.query_mut::<(&Controls, &mut Boost)>() {
+            *b = 0.0;
+            if is_key_down(controls.up) {
+                *b += BOOST_POWER;
+            }
+            if is_key_down(controls.down) {
+                *b -= BOOST_POWER;
+            }
         }
 
         // rotation accel
-        let mut rot_accel = 0.0;
-        if is_key_down(KeyCode::Left) | is_key_down(KeyCode::A) {
-            rot_accel += ROTATIONAL_ACCELERATION;
-        }
-        if is_key_down(KeyCode::Right) | is_key_down(KeyCode::D) {
-            rot_accel -= ROTATIONAL_ACCELERATION;
-        }
-        rot_accel *= delta_t;
-        for (_id, (_controls, rv)) in self.world.query_mut::<(&Controls, &mut RotVel)>() {
-            rv.0 += rot_accel;
+        for (_id, (controls, RotVel(rv))) in self.world.query_mut::<(&Controls, &mut RotVel)>() {
+            if is_key_down(controls.left) {
+                *rv += ROTATIONAL_ACCELERATION * delta_t;
+            }
+            if is_key_down(controls.right) {
+                *rv -= ROTATIONAL_ACCELERATION * delta_t;
+            }
         }
 
         // when boosting up, rotation should tend upwards, it feels better that way
@@ -174,15 +181,11 @@ impl Heli {
         let delta_t = get_frame_time();
 
         let mut collisions: Vec<(Entity, Entity, TOI, f32)> = Vec::new();
-        for (ia, (Vel(va), Pos(pa), _, Wireframe(wfa), Rot(ra))) in self
-            .world
-            .query::<(&Vel, &Pos, &Collides, &Wireframe, &Rot)>()
-            .iter()
+        for (ia, (Vel(va), Pos(pa), Collides(ca), Rot(ra))) in
+            self.world.query::<(&Vel, &Pos, &Collides, &Rot)>().iter()
         {
-            for (ib, (Vel(vb), Pos(pb), _, Wireframe(wfb), Rot(rb))) in self
-                .world
-                .query::<(&Vel, &Pos, &Collides, &Wireframe, &Rot)>()
-                .iter()
+            for (ib, (Vel(vb), Pos(pb), Collides(cb), Rot(rb))) in
+                self.world.query::<(&Vel, &Pos, &Collides, &Rot)>().iter()
             {
                 if ia == ib {
                     continue;
@@ -190,10 +193,10 @@ impl Heli {
                 let impact = time_of_impact(
                     &Isometry::new([pa.x, pa.y].into(), *ra),
                     &Vector::new(va.x, va.y),
-                    &wireframe_to_polyline(wfa),
+                    &**ca,
                     &Isometry::new([pb.x, pb.y].into(), *rb),
                     &Vector::new(vb.x, vb.y),
-                    &wireframe_to_polyline(wfb),
+                    &**cb,
                     delta_t,
                 )
                 .unwrap();
@@ -309,7 +312,12 @@ impl Heli {
 }
 
 #[derive(Debug)]
-pub struct Controls;
+pub struct Controls {
+    up: KeyCode,
+    down: KeyCode,
+    left: KeyCode,
+    right: KeyCode,
+}
 
 #[derive(Debug)]
 pub struct Rot(pub f32);
@@ -341,8 +349,7 @@ pub struct Boost(pub f32);
 #[derive(Debug)]
 pub struct Quit;
 
-/// collisions are calculated using wireframe
-pub struct Collides;
+pub struct Collides(Box<dyn Shape>);
 
 #[derive(Debug)]
 pub struct Wireframe(&'static [(f32, f32)]);
