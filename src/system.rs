@@ -242,7 +242,7 @@ impl Heli {
             _ib,
             TOI {
                 toi,
-                witness1: _,
+                witness1,
                 witness2: _,
                 normal1,
                 normal2: _,
@@ -251,15 +251,18 @@ impl Heli {
             ra,
         ) in collisions
         {
-            let (vel, pos) = self
+            let (vel, pos, rvel) = self
                 .world
-                .query_one_mut::<(&mut Vel, &mut Pos)>(ia)
+                .query_one_mut::<(&mut Vel, &mut Pos, Option<&mut RotVel>)>(ia)
                 .unwrap();
             let v: &mut Vec2 = &mut vel.0;
             let p: &mut Vec2 = &mut pos.0;
             let n: Vec2 = (normal1.x, normal1.y).into();
             // get normal in world space
             let n = Rot(ra).quat().mul_vec3(n.extend(0.0)).truncate();
+
+            let mut rvel_bak = RotVel(0.0);
+            let rvel = rvel.unwrap_or(&mut rvel_bak);
 
             // perhaps if this ends up being janky, you can use witness1 to calculate normal
 
@@ -277,6 +280,11 @@ impl Heli {
             // position will be outside of the collision
             // this makes for a fully elastic collision
             *p += (*v - newvel) * toi;
+
+            rvel.0 += rotvel_delta_on_impact(
+                Vec2::new(witness1.x, witness1.y),
+                Vec2::new(normal1.x, normal1.y) * v.length(),
+            );
 
             *v = newvel;
 
@@ -406,4 +414,14 @@ fn draw_wireframe(wireframe: &[(f32, f32)], position: Vec2, rotation: Quat, colo
             color,
         );
     }
+}
+
+fn rotvel_delta_on_impact(local_space_impact_point: Vec2, impulse_vector: Vec2) -> f32 {
+    const MOMENT_OF_INERTIA: f32 = 10.0;
+
+    -local_space_impact_point
+        .normalize()
+        .perp_dot(impulse_vector.normalize())
+        * impulse_vector.length()
+        / MOMENT_OF_INERTIA
 }
